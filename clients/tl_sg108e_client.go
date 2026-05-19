@@ -78,6 +78,40 @@ func (client *TPLINKSwitch) fetchPortStats() (string, error) {
 	return string(body), nil
 }
 
+func (client *TPLINKSwitch) tryFetchPortStats() (string, error) {
+	// Try login up to 2 times
+	maxLoginAttempts := 2
+	loginAttempts := 0
+
+	for {
+		if !client.loggedIn {
+			loginAttempts++
+			if loginAttempts > maxLoginAttempts {
+				return "", fmt.Errorf("cannot login, all attempts exceeded")
+			}
+			err := client.Login()
+			if err != nil {
+				log.Printf("Login attempt %d failed: %v\n", loginAttempts, err)
+				continue
+			}
+		}
+
+		body, err := client.fetchPortStats()
+		if err != nil {
+			return "", err
+		}
+
+		// Check for LogonInfo - if found, session is invalid
+		if strings.Contains(string(body), "var logonInfo = new Array(\n0,") {
+			log.Printf("LogonInfo detected after fetchPortStats, marking as logged out\n")
+			client.loggedIn = false
+			continue
+		}
+
+		return body, nil
+	}
+}
+
 func (client *TPLINKSwitch) GetPortStats() ([]portStats, error) {
 	type allInfo struct {
 		State      []int
@@ -85,25 +119,11 @@ func (client *TPLINKSwitch) GetPortStats() ([]portStats, error) {
 		Pkts       []int
 	}
 
-	if !client.loggedIn {
-		err := client.Login()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	body, err := client.fetchPortStats()
+	body, err := client.tryFetchPortStats()
 	if err != nil {
 		return nil, err
-	} else if strings.Contains(string(body), "var logonInfo = new Array(\n0,") {
-		// logged out or session expired, try to login again
-		client.Login()
-		body, err = client.fetchPortStats()
-		if err != nil {
-			return nil, err
-		}
 	}
-
+	// Successfully fetched port stats with valid session
 	// fmt.Println(string(body))
 	var jbody string = strings.ReplaceAll(
 		strings.ReplaceAll(
